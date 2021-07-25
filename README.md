@@ -11,4 +11,4 @@ Demonstrates a number of graphical features:
 - Phong Tessellation
 - Displacement mapping
 
-![preview](https://github.com/Nin1/university-game-engineblob/main/preview.png?raw=true)
+![preview](https://github.com/Nin1/university-game-engine/blob/main/preview.png?raw=true)
