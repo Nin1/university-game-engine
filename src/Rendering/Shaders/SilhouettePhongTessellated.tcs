@@ -1,0 +1,138 @@
+﻿#version 430 core
+
+// Data input for adjacent triangles:
+// Vertices 0 - 2 are the original triangle
+// Vertices 3 - 5 are the adjacent triangles
+//
+//            3
+//        '   '
+//       0-----1
+//       ' \     / '
+//     '    \   /    '
+// 5  ,       \ /    ,  4
+//          '  2  '
+//
+// Now for each edge, its 'silhouetteness' can be found
+// If an edge is on the silhouette, apply full phong displacement to that edge
+
+struct PhongPatch
+{
+    float termIJ;
+    float termJK;
+    float termIK;
+};
+
+layout(vertices = 3) out;
+
+in vec3 vPosition[];
+in vec3 vNormal[];
+in vec2 vTexCoord[];
+
+out vec3 tcPosition[];
+out vec3 tcNormal[];
+out vec2 tcTexCoord[];
+out PhongPatch tcPhongPatch[];
+
+patch out float silhouetteUV;
+patch out float silhouetteVW;
+patch out float silhouetteWU;
+
+uniform float innerTessLevel;
+uniform float outerTessLevel;
+
+uniform mat4 modelMat;
+uniform vec3 viewPos;
+
+float PIi(int i, vec3 q) //@TODO: Change the name of this function
+{
+    vec3 qMinusP = q - vPosition[i];
+    return q[gl_InvocationID] - dot(qMinusP, vNormal[i]) * vNormal[i][gl_InvocationID];
+}
+
+// The 'silhouetteness' of an edge of a triangle is calculated as the product between two terms
+// The first is the product of the vector that goes from the camera to the midpoint of the edge and the normal
+// And the second is the same product but with the normal of the adjacent triangle.
+// beta is a constant, dependent on local geometry, that lets us define a 'transitional' region close to an edge
+float calculateSilhouetteness(int edge, vec3 mainNormal, vec3 adjNormal, float beta)
+{
+    vec3 edgeVector = vPosition[edge] + vPosition[(edge + 1) % 3];
+    vec3 edgeMidPoint = edgeVector / 2.0;
+
+    vec3 pointToViewDir = normalize(viewPos - edgeMidPoint);
+    
+    float firstTerm = dot(pointToViewDir, mainNormal);
+    float secondTerm = dot(pointToViewDir, adjNormal);
+    
+    float product = firstTerm * secondTerm;
+
+    if(product <= 0.0) return 1.0;
+    if(product <= beta) return 1.0 - product / beta;
+    return 0;
+}
+
+void main()
+{
+    if(gl_InvocationID == 0)
+    {
+        float finalInnerTessLevel = innerTessLevel;
+        float finalOuterTessLevel = innerTessLevel;
+        
+        if(innerTessLevel > 1 || outerTessLevel > 1)
+        {
+    // Calculate silhouetteness of each edge
+    // Use highest silhouetteness to calculate tess level
+
+    // Calculate normal of each triangle
+    vec3 edge1 = vPosition[1] - vPosition[0];
+    vec3 edge2 = vPosition[2] - vPosition[0];
+    vec3 mainNormal = normalize(cross(edge1, edge2));
+
+    edge1 = vPosition[3] - vPosition[0];
+    edge2 = vPosition[1] - vPosition[0];
+    vec3 adjNormal1 = normalize(cross(edge1, edge2));
+
+    edge1 = vPosition[4] - vPosition[1];
+    edge2 = vPosition[2] - vPosition[1];
+    vec3 adjNormal2 = normalize(cross(edge1, edge2));
+
+    edge1 = vPosition[0] - vPosition[5];
+    edge2 = vPosition[2] - vPosition[5];
+    vec3 adjNormal3 = normalize(cross(edge1, edge2));
+
+    float beta = 0.2;
+
+    silhouetteUV = calculateSilhouetteness(0, mainNormal, adjNormal1, beta);
+    silhouetteVW = calculateSilhouetteness(1, mainNormal, adjNormal2, beta);
+    silhouetteWU = calculateSilhouetteness(2, mainNormal, adjNormal3, beta);
+
+    bool isSilhouette = silhouetteUV > 0.0 ||
+                        silhouetteVW > 0.0 ||
+                        silhouetteWU > 0.0 ||
+                        vPosition[0] == vPosition[3] || // If there is no neighbouring triangle, the first vertex of the edge is used as a placeholder.
+                        vPosition[1] == vPosition[4] || // Treat these triangles as silhouettes
+                        vPosition[2] == vPosition[5];    
+    
+    finalInnerTessLevel = isSilhouette ? innerTessLevel : 1;
+    finalOuterTessLevel = isSilhouette ? outerTessLevel : 1;
+        }
+        else
+        {
+            silhouetteUV = 0.0;
+            silhouetteVW = 0.0;
+            silhouetteWU = 0.0;
+        }
+
+        gl_TessLevelInner[0] = finalInnerTessLevel;
+        gl_TessLevelOuter[0] = finalOuterTessLevel;
+        gl_TessLevelOuter[1] = finalOuterTessLevel;
+        gl_TessLevelOuter[2] = finalOuterTessLevel;
+    }
+
+    tcPosition[gl_InvocationID] = vPosition[gl_InvocationID];
+    tcNormal[gl_InvocationID] = vNormal[gl_InvocationID];
+    tcTexCoord[gl_InvocationID] = vTexCoord[gl_InvocationID];
+
+    tcPhongPatch[gl_InvocationID].termIJ = PIi(0, vPosition[1]) + PIi(1, vPosition[0]);
+    tcPhongPatch[gl_InvocationID].termJK = PIi(1, vPosition[2]) + PIi(2, vPosition[1]);
+    tcPhongPatch[gl_InvocationID].termIK = PIi(2, vPosition[0]) + PIi(0, vPosition[2]);
+}
